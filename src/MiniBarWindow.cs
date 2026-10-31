@@ -60,8 +60,8 @@ namespace MiniPerfApp
             new SegDef("gpu", "GPU", 0x7C, 0x3A, 0xED),
             new SegDef("npu", "NPU", 0x0D, 0x94, 0x88),
             new SegDef("ram", "\u5185\u5b58", 0xE1, 0x1D, 0x48),
-            new SegDef("down", "\u2193", 0x05, 0x96, 0x69),
-            new SegDef("up", "\u2191", 0x10, 0xB9, 0x81)
+            new SegDef("down", "\u7f51\u2193", 0x05, 0x96, 0x69),
+            new SegDef("up", "\u7f51\u2191", 0x10, 0xB9, 0x81)
         };
         private System.Windows.Threading.DispatcherTimer _timer;
 
@@ -134,10 +134,24 @@ namespace MiniPerfApp
             MouseWheel += new MouseWheelEventHandler(OnWheel);
             Closing += new System.ComponentModel.CancelEventHandler(OnClosing);
 
+            ToolTip = "\u62d6\u52a8\u79fb\u52a8 \u00b7 \u6eda\u8f6e\u8c03\u900f\u660e\u5ea6 \u00b7 \u53f3\u952e\u83dc\u5355";
+            ContextMenu = BuildMenu();
+
             _timer = new System.Windows.Threading.DispatcherTimer();
             _timer.Interval = TimeSpan.FromSeconds(1);
             _timer.Tick += new EventHandler(OnTick);
             _timer.Start();
+        }
+
+        private ContextMenu BuildMenu()
+        {
+            ContextMenu m = new ContextMenu();
+            m.FontSize = 12;
+            MenuItem exit = new MenuItem();
+            exit.Header = "\u9000\u51fa MiniPerf";
+            exit.Click += new RoutedEventHandler(delegate(object s, RoutedEventArgs e2) { Close(); });
+            m.Items.Add(exit);
+            return m;
         }
 
         private void OnDrag(object sender, MouseButtonEventArgs e)
