@@ -64,6 +64,20 @@ namespace MiniPerfApp
             new SegDef("up", "\u7f51\u2191", 0x10, 0xB9, 0x81)
         };
         private System.Windows.Threading.DispatcherTimer _timer;
+        private PanelWindow _panel;
+        private TrayService _tray;
+        private Point _downPos;
+        private bool _moved;
+
+        public PanelWindow Panel
+        {
+            get { return _panel; }
+        }
+
+        public MetricsCollector Collector
+        {
+            get { return _collector; }
+        }
 
         public MiniBarWindow(MetricsCollector collector, AppSettings settings)
         {
@@ -130,9 +144,14 @@ namespace MiniPerfApp
             }
             EnsureOnScreen();
 
-            MouseLeftButtonDown += new MouseButtonEventHandler(OnDrag);
+            MouseLeftButtonDown += new MouseButtonEventHandler(OnDragDown);
+            MouseLeftButtonUp += new MouseButtonEventHandler(OnDragUp);
             MouseWheel += new MouseWheelEventHandler(OnWheel);
             Closing += new System.ComponentModel.CancelEventHandler(OnClosing);
+
+            _panel = new PanelWindow(collector, this);
+            _panel.Hide();
+            _tray = new TrayService(this, _panel);
 
             ToolTip = "\u62d6\u52a8\u79fb\u52a8 \u00b7 \u6eda\u8f6e\u8c03\u900f\u660e\u5ea6 \u00b7 \u53f3\u952e\u83dc\u5355";
             ContextMenu = BuildMenu();
@@ -154,6 +173,26 @@ namespace MiniPerfApp
             return m;
         }
 
+        private void OnDragDown(object sender, MouseButtonEventArgs e)
+        {
+            _downPos = e.GetPosition(this);
+            _moved = false;
+        }
+
+        private void OnDragUp(object sender, MouseButtonEventArgs e)
+        {
+            if (!_moved)
+            {
+                // treat as click: toggle panel below the bar
+                if (_panel.IsPanelVisible) _panel.Hide();
+                else
+                {
+                    _panel.ShowBelow(Left, Top + Height + 6);
+                    Log.Write("panel shown");
+                }
+            }
+        }
+
         private void OnDrag(object sender, MouseButtonEventArgs e)
         {
             try { DragMove(); } catch { }
@@ -166,6 +205,20 @@ namespace MiniPerfApp
             if (o > 1.0) o = 1.0;
             Opacity = o;
             _settings.Opacity = o;
+        }
+
+        protected override void OnMouseMove(System.Windows.Input.MouseEventArgs e)
+        {
+            base.OnMouseMove(e);
+            if (e.LeftButton == MouseButtonState.Pressed)
+            {
+                Point p = e.GetPosition(this);
+                if (Math.Abs(p.X - _downPos.X) > 4 || Math.Abs(p.Y - _downPos.Y) > 4)
+                {
+                    _moved = true;
+                    try { DragMove(); } catch { }
+                }
+            }
         }
 
         private bool _loggedOnce = false;
@@ -188,12 +241,15 @@ namespace MiniPerfApp
             _values[1].Foreground = Palette.Throttled(Palette.Gpu, s.Gpu);
             _values[2].Foreground = Palette.Throttled(Palette.Npu, s.Npu);
             _values[3].Foreground = Palette.Throttled(Palette.Ram, s.RamPct);
+
+            if (_tray != null) _tray.Update(s.Cpu);
         }
 
         private void OnClosing(object sender, System.ComponentModel.CancelEventArgs e)
         {
             _settings.BarX = Left;
             _settings.BarY = Top;
+            if (_tray != null) _tray.Dispose();
         }
 
         private void EnsureOnScreen()
@@ -203,6 +259,11 @@ namespace MiniPerfApp
             if (Top < wa.Top) Top = wa.Top;
             if (Left + Width > wa.Right) Left = wa.Right - Width;
             if (Top + Height > wa.Bottom) Top = wa.Bottom - Height;
+        }
+
+        public void FocusBar()
+        {
+            try { Activate(); } catch { }
         }
     }
 
