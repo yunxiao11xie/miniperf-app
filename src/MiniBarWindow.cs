@@ -60,8 +60,8 @@ namespace MiniPerfApp
             new SegDef("gpu", "GPU", 0x7C, 0x3A, 0xED),
             new SegDef("npu", "NPU", 0x0D, 0x94, 0x88),
             new SegDef("ram", "\u5185\u5b58", 0xE1, 0x1D, 0x48),
-            new SegDef("down", "\u7f51\u2193", 0x05, 0x96, 0x69),
-            new SegDef("up", "\u7f51\u2191", 0x10, 0xB9, 0x81)
+            new SegDef("down", "\u7f51\u901f", 0x05, 0x96, 0x69),
+            new SegDef("up", "\u6e29\u5ea6", 0xEA, 0x58, 0x0C)
         };
         private System.Windows.Threading.DispatcherTimer _timer;
         private PanelWindow _panel;
@@ -236,11 +236,15 @@ namespace MiniPerfApp
             _values[2].Text = Format.Pct(s.Npu);
             _values[3].Text = Format.Pct(s.RamPct);
             _values[4].Text = Format.Rate(s.NetDown);
-            _values[5].Text = Format.Rate(s.NetUp);
+            _values[5].Text = double.IsNaN(s.CpuTemp) ? "\u2014" : ((int)s.CpuTemp).ToString() + "\u00b0";
             _values[0].Foreground = Palette.Throttled(Palette.Cpu, s.Cpu);
             _values[1].Foreground = Palette.Throttled(Palette.Gpu, s.Gpu);
             _values[2].Foreground = Palette.Throttled(Palette.Npu, s.Npu);
             _values[3].Foreground = Palette.Throttled(Palette.Ram, s.RamPct);
+            if (!double.IsNaN(s.CpuTemp))
+            {
+                _values[5].Foreground = s.CpuTemp >= 90 ? Palette.Danger : (s.CpuTemp >= 75 ? Palette.Warn : _segs[5].Brush());
+            }
 
             if (_tray != null) _tray.Update(s.Cpu);
         }

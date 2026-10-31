@@ -21,12 +21,12 @@ namespace MiniPerfApp
         private readonly string[] _cellKeys = new string[]
         {
             "CPU", "GPU", "NPU", "\u5185\u5b58",
-            "\u7f51\u2193", "\u7f51\u2191", "CPU\u6e29\u5ea6", "\u78c1\u76d8"
+            "\u7f51\u2193", "\u7f51\u2191", "\u6e29\u5ea6", "\u78c1\u76d8"
         };
         private readonly SolidColorBrush[] _cellColors = new SolidColorBrush[]
         {
             Palette.Cpu, Palette.Gpu, Palette.Npu, Palette.Ram,
-            Palette.Down, Palette.Up, Palette.LabelGray, Frozen(0xEA, 0x58, 0x0C)
+            Palette.Down, Palette.Up, Frozen(0xEA, 0x58, 0x0C), Frozen(0xEA, 0x58, 0x0C)
         };
 
         private ChartControl _chart;
@@ -100,6 +100,10 @@ namespace MiniPerfApp
             collapse.Margin = new Thickness(8, 0, 12, 0);
             Grid.SetColumn(collapse, 2);
             top.Children.Add(title); top.Children.Add(dot); top.Children.Add(collapse);
+            top.MouseLeftButtonDown += new MouseButtonEventHandler(delegate(object s, MouseButtonEventArgs e2)
+            {
+                try { DragMove(); } catch { }
+            });
 
             Separator sepTop = new Separator();
             sepTop.Background = new SolidColorBrush(Color.FromArgb(0x0D, 0x00, 0x00, 0x00));
@@ -299,7 +303,7 @@ namespace MiniPerfApp
             _cellValues[3].Text = Format.Pct(s.RamPct);
             _cellValues[4].Text = Format.Rate(s.NetDown);
             _cellValues[5].Text = Format.Rate(s.NetUp);
-            _cellValues[6].Text = "\u2014";
+            _cellValues[6].Text = double.IsNaN(s.CpuTemp) ? "\u2014" : ((int)s.CpuTemp).ToString() + "\u00b0C";
             _cellValues[7].Text = Format.Pct(s.DiskPct);
             _cellValues[0].Foreground = Palette.Throttled(Palette.Cpu, s.Cpu);
             _cellValues[3].Foreground = Palette.Throttled(Palette.Ram, s.RamPct);

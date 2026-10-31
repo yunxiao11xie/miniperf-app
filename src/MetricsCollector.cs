@@ -14,6 +14,7 @@ namespace MiniPerfApp
         public double NetDown;   // bytes/s
         public double NetUp;     // bytes/s
         public double DiskPct;
+        public double CpuTemp = double.NaN; // NaN = unavailable
         public DateTime At;
 
         public MetricsSnapshot()
@@ -149,14 +150,51 @@ namespace MiniPerfApp
         {
             // discard first round (warm-up across counters)
             SampleOnce(true);
+            double cachedTemp = double.NaN;
+            int tempCycle = 99; // force early refresh
             while (!_stop)
             {
-                SampleOnce(false);
+                if (tempCycle >= 5)
+                {
+                    cachedTemp = QueryCpuTemp();
+                    tempCycle = 0;
+                }
+                tempCycle++;
+                SampleOnce(false, cachedTemp);
                 for (int i = 0; i < 10 && !_stop; i++) Thread.Sleep(100);
             }
         }
 
+        private static double QueryCpuTemp()
+        {
+            try
+            {
+                using (System.Management.ManagementObjectSearcher s =
+                    new System.Management.ManagementObjectSearcher("root\\WMI", "SELECT * FROM MSAcpi_ThermalZoneTemperature"))
+                {
+                    foreach (System.Management.ManagementBaseObject o in s.Get())
+                    {
+                        try
+                        {
+                            double raw = Convert.ToDouble(o["CurrentTemperature"]);
+                            double c = raw / 10.0 - 273.15;
+                            if (c > 0 && c < 120) return Math.Round(c);
+                        }
+                        catch { }
+                        break;
+                    }
+                }
+            }
+            catch { }
+            return double.NaN;
+        }
+
         private void SampleOnce(bool warmup)
+        {
+            SampleOnce(warmup, double.NaN);
+        }
+
+        private void SampleOnce(bool warmup, double cpuTemp)
         {
             try
             {
@@ -187,6 +225,7 @@ namespace MiniPerfApp
                     double idle = _diskIdle.NextValue();
                     s.DiskPct = Clamp(100 - idle);
                 }
+                s.CpuTemp = cpuTemp;
                 if (!warmup) _latest = s;
                 if (!_loggedEngines && !warmup)
                 {
