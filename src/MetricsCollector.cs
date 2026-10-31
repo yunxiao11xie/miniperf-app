@@ -15,6 +15,7 @@ namespace MiniPerfApp
         public double NetUp;     // bytes/s
         public double DiskPct;
         public double CpuTemp = double.NaN; // NaN = unavailable
+        public double CpuFreq;              // GHz
         public DateTime At;
 
         public MetricsSnapshot()
@@ -23,13 +24,15 @@ namespace MiniPerfApp
         }
     }
 
-    // tracks dynamic "GPU Engine" counter instances, groups by engine type
+    // tracks dynamic "GPU Engine" counter instances, groups by engine type.
+    // instance sync is expensive (hundreds of PDH queries) -> every 5th cycle only.
     internal class GpuEngineSampler
     {
         private const string Category = "GPU Engine";
         private const string Counter = "Utilization Percentage";
         private readonly Dictionary<string, PerformanceCounter> _counters =
             new Dictionary<string, PerformanceCounter>();
+        private int _cycle = 99;
 
         private static string EngineTypeOf(string instance)
         {
@@ -43,40 +46,23 @@ namespace MiniPerfApp
             gpu = 0; npu = 0;
             try
             {
-                string[] names = new PerformanceCounterCategory(Category).GetInstanceNames();
+                _cycle++;
+                if (_cycle >= 5)
+                {
+                    _cycle = 0;
+                    SyncInstances();
+                }
                 Dictionary<string, double> byType = new Dictionary<string, double>();
-
-                // drop vanished instances
-                List<string> dead = new List<string>();
                 foreach (KeyValuePair<string, PerformanceCounter> kv in _counters)
                 {
-                    bool alive = false;
-                    foreach (string n in names) { if (n == kv.Key) { alive = true; break; } }
-                    if (!alive) dead.Add(kv.Key);
-                }
-                foreach (string d in dead)
-                {
-                    _counters[d].Dispose();
-                    _counters.Remove(d);
-                }
-
-                foreach (string n in names)
-                {
-                    string t = EngineTypeOf(n);
+                    string t = EngineTypeOf(kv.Key);
                     if (t.Length == 0) continue;
-                    PerformanceCounter pc;
-                    if (!_counters.TryGetValue(n, out pc))
-                    {
-                        pc = new PerformanceCounter(Category, Counter, n, true);
-                        pc.NextValue(); // warm-up
-                        _counters[n] = pc;
-                    }
-                    double v = pc.NextValue();
+                    double v = kv.Value.NextValue();
+                    if (v < 0) v = 0;
                     double cur;
                     byType.TryGetValue(t, out cur);
                     byType[t] = cur + v;
                 }
-
                 foreach (KeyValuePair<string, double> kv in byType)
                 {
                     if (kv.Key == "Neural") { npu += kv.Value; }
@@ -87,6 +73,35 @@ namespace MiniPerfApp
             if (gpu > 100) gpu = 100;
             if (npu > 100) npu = 100;
         }
+
+        private void SyncInstances()
+        {
+            string[] names = new PerformanceCounterCategory(Category).GetInstanceNames();
+            List<string> dead = new List<string>();
+            foreach (KeyValuePair<string, PerformanceCounter> kv in _counters)
+            {
+                bool alive = false;
+                foreach (string n in names) { if (n == kv.Key) { alive = true; break; } }
+                if (!alive) dead.Add(kv.Key);
+            }
+            foreach (string d in dead)
+            {
+                _counters[d].Dispose();
+                _counters.Remove(d);
+            }
+            foreach (string n in names)
+            {
+                if (_counters.ContainsKey(n)) continue;
+                if (EngineTypeOf(n).Length == 0) continue;
+                try
+                {
+                    PerformanceCounter pc = new PerformanceCounter(Category, Counter, n, true);
+                    pc.NextValue();
+                    _counters[n] = pc;
+                }
+                catch { }
+            }
+        }
     }
 
     public class MetricsCollector : IDisposable
@@ -95,6 +110,8 @@ namespace MiniPerfApp
         private volatile bool _stop;
         private volatile MetricsSnapshot _latest;
         private PerformanceCounter _cpu;
+        private PerformanceCounter _perf;     // % Processor Performance (freq)
+        private double _baseFreqMhz = 0;      // MaxClockSpeed from WMI
         private PerformanceCounter _diskIdle;
         private PerformanceCounter _netDown;
         private PerformanceCounter _netUp;
@@ -111,6 +128,22 @@ namespace MiniPerfApp
         {
             _cpu = new PerformanceCounter("Processor Information", "% Processor Utility", "_Total", true);
             _cpu.NextValue();
+            try
+            {
+                _perf = new PerformanceCounter("Processor Information", "% Processor Performance", "_Total", true);
+                _perf.NextValue();
+                using (System.Management.ManagementObjectSearcher ms =
+                    new System.Management.ManagementObjectSearcher("SELECT MaxClockSpeed FROM Win32_Processor"))
+                {
+                    foreach (System.Management.ManagementBaseObject o in ms.Get())
+                    {
+                        _baseFreqMhz = Convert.ToDouble(o["MaxClockSpeed"]);
+                        break;
+                    }
+                }
+                Log.Write("base freq: " + _baseFreqMhz.ToString("0") + " MHz");
+            }
+            catch { }
             _gpu = new GpuEngineSampler();
             try
             {
@@ -149,11 +182,14 @@ namespace MiniPerfApp
         private void RunLoop()
         {
             // discard first round (warm-up across counters)
-            SampleOnce(true);
+            SampleOnce(true, double.NaN);
             double cachedTemp = double.NaN;
-            int tempCycle = 99; // force early refresh
+            int tempCycle = 99;
+            Stopwatch beat = new Stopwatch();
             while (!_stop)
             {
+                beat.Reset();
+                beat.Start();
                 if (tempCycle >= 5)
                 {
                     cachedTemp = QueryCpuTemp();
@@ -161,7 +197,12 @@ namespace MiniPerfApp
                 }
                 tempCycle++;
                 SampleOnce(false, cachedTemp);
-                for (int i = 0; i < 10 && !_stop; i++) Thread.Sleep(100);
+                long elapsed = beat.ElapsedMilliseconds;
+                int remain = 1000 - (int)elapsed;
+                if (remain > 0)
+                {
+                    for (int i = 0; i < remain && !_stop; i += 100) Thread.Sleep(Math.Min(100, remain - i > 0 ? 100 : 0));
+                }
             }
         }
 
@@ -226,6 +267,14 @@ namespace MiniPerfApp
                     s.DiskPct = Clamp(100 - idle);
                 }
                 s.CpuTemp = cpuTemp;
+                if (_perf != null && _baseFreqMhz > 0)
+                {
+                    double perf = _perf.NextValue();
+                    if (perf > 0 && perf < 400)
+                    {
+                        s.CpuFreq = _baseFreqMhz * perf / 100.0 / 1000.0;
+                    }
+                }
                 if (!warmup) _latest = s;
                 if (!_loggedEngines && !warmup)
                 {
